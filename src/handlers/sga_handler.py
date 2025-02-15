@@ -1,8 +1,7 @@
 from logging import Logger
 import serial
 import time
-from utils.minicom import find_active_ttyUSB_port, execute_commands_on_ttyUSB_port, find_response_in_terminal_output, CommandFailedError
-
+from utils.minicom import *
 
 SERIAL_CONFIG = {
     "baudrate": 115200,
@@ -13,6 +12,32 @@ SERIAL_CONFIG = {
     "rtscts": False,
     "xonxoff": False,
 }
+
+def wait_sga_running(ser, quiet):
+    """Waits until the SGA has started up."""
+    import time
+    from lib.common import function_failure
+    log_in_user(ser, quiet)
+    logger.info("Waiting for systemd to finish starting services")
+    print("waiting for systemd to finish starting services ...") if not quiet else None
+    serial_command(ser, b"systemctl is-system-running --wait\r", quiet, read_until=b"~$")
+    logger.info("Waiting for OBD port tcp/3458 to get open")
+    print("checking if port 13400 is open ...") if not quiet else None
+    ser.timeout = 2
+    deadline = time.time() + 200
+    while time.time() < deadline:
+        lines = serial_command(
+            ser, b"grep -o '[0-9]\\+: [0-9A-F]\\+:3458' /proc/net/tcp\r", quiet, timeout=0
+        ).read_until(b"~$")
+        logger.debug(f"Received over serial from the SGA: '{lines}'")
+        echo(lines, quiet)
+        if bytes(":3458", "ascii") in lines:
+            logger.info("OBD port tcp/3458 is now open")
+            print("OBD port (13400) is now up") if not quiet else None
+            return
+    function_failure("ERROR: OBD port (13400) is not up")
+
+
 def serial_command(ser: serial.Serial, cmd, logger: Logger):
     assert ser.is_open
     time.sleep(0.1)
@@ -92,7 +117,11 @@ def uboot_flash(ser, logger: Logger):
 
 def flash_sga(logger: Logger):
     try:
-        port_num = find_active_ttyUSB_port(prompt=["DoIP-VCC", "=>"] , max_ports=6, logger=logger)
+        serial_strategy = BasicSerialCommand()
+        serial_executor = SerialCommandExecutor(serial_strategy)
+
+
+        port_num = 3 # find_active_ttyUSB_port(prompt=["DoIP-VCC", "=>"] , max_ports=6, logger=logger)
         port = f"/dev/ttyUSB{port_num}"
         logger.info(f"Connecting to {port} for command execution.")
         user = "swupdate"
@@ -100,6 +129,9 @@ def flash_sga(logger: Logger):
         
 
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
+
+            serial_executor.execute(ser, b"\x04", logger, "login", timeout=2)
+            return
             prestate = check_sga_pre_state(ser, logger)
             logged_in = False
 

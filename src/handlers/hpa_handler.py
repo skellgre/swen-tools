@@ -92,21 +92,23 @@ def bootburn_hpa(logger: Logger):
         strategy = CharacterByCharacterSerialCommand()
         executor = SerialCommandExecutor(strategy)
 
-        port = f"/dev/ttyUSB{4}"
-        with serial.Serial(port, **SERIAL_CONFIG) as ser:
-            executor.execute(ser, b"test", logger, "Error unknown command: t")
         
-        ser.close()
 
-        #active_port = find_active_ttyUSB_port()
-        #activate_result = execute_commands_on_ttyUSB_port(active_port, ACTIVATE_RECOVERY_MODE_COMMANDS)
-        #print(activate_result)
+        #port = f"/dev/ttyUSB{port}"
+        #with serial.Serial(port, **SERIAL_CONFIG) as ser:
+        #    executor.execute(ser, b"test", logger, "Error unknown command: t")
+        
+        #ser.close()
 
-        #run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS)
-        #deactivate_result = execute_commands_on_ttyUSB_port(active_port, DEACTIVATE_RECOVERY_MODE_COMMANDS)
-        #print(deactivate_result)
+        active_port = find_active_ttyUSB_port("GoForHIA>", 6, logger)
+        activate_result = execute_commands_on_ttyUSB_port(active_port, ACTIVATE_RECOVERY_MODE_COMMANDS)
+        print(activate_result)
 
-        #logger.info("HPA bootburn completed successfully!")
+        run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS)
+        deactivate_result = execute_commands_on_ttyUSB_port(active_port, DEACTIVATE_RECOVERY_MODE_COMMANDS)
+        print(deactivate_result)
+
+        logger.info("HPA bootburn completed successfully!")
     except PortNotFoundError:
         pass
     except CommandFailedError:
