@@ -28,10 +28,10 @@ class SerialCommandStrategy(ABC):
         self,
         ser: serial.Serial,
         command: bytes,
-        logger: Logger,
         expected_response: bytes,
         timeout: int,
-    ):
+        logger: Logger,
+    ) -> str:
         pass
 
 
@@ -42,30 +42,33 @@ class BasicSerialCommand(SerialCommandStrategy):
         self,
         ser: serial.Serial,
         command: bytes,
-        logger: Logger,
         expected_response: bytes,
         timeout: int,
+        logger: Logger,
     ):
         assert ser.is_open
-        ser.timeout = timeout
-        time.sleep(0.1)
-
+        start_time = time.time()
         ser.write(command + b"\r")
         ser.flush()
         logger.debug(f"Executed command over serial: '{command}'")
 
-        response = (
-            ser.read(ser.in_waiting or 1024).decode("utf-8", errors="replace").strip()
-        )
+        response = b""
 
-        if expected_response not in response:
-            logger.warning(
-                f"Unexpected response. Expected: {expected_response}, Actual: {response}"
-            )
-        else:
-            logger.info(f"Command executed successfully: {expected_response}")
+        while time.time() - start_time < timeout:
+           # data = ser.read(ser.in_waiting or 1)  # Read available bytes (or 1 byte)
+            data = ser.read_all()
+            if data:
+                response += data
+                decoded_response = response.decode("utf-8", errors="replace").strip()
 
-        return response
+                if expected_response in response:
+                    logger.debug(f"Expected response received after command: {decoded_response}")
+                    return decoded_response
+
+            time.sleep(0.05)  # Short delay to prevent CPU overuse
+
+        logger.debug(f"Timeout reached! Expected: {expected_response.decode()}, Received: {response.decode('utf-8', errors='replace').strip()}")
+        return response.decode("utf-8", errors="replace").strip()
 
 
 class CharacterByCharacterSerialCommand(SerialCommandStrategy):
@@ -75,9 +78,9 @@ class CharacterByCharacterSerialCommand(SerialCommandStrategy):
         self,
         ser: serial.Serial,
         command: bytes,
-        logger: Logger,
         expected_response: bytes,
         timeout: int,
+        logger: Logger,
     ):
         assert ser.is_open
         ser.timeout = timeout
@@ -86,18 +89,16 @@ class CharacterByCharacterSerialCommand(SerialCommandStrategy):
         logger.debug(f"Executing command char-by-char: '{command}'")
         for c in command:
             ser.write(bytes([c]))  # Send one character at a time
-            time.sleep(0.1)  # Delay between characters
+            time.sleep(0.1)
 
-        ser.write(b"\r")  # Send Enter
+        ser.write(b"\r")
         ser.flush()
 
         time.sleep(1)
         response = ser.read_all().decode("utf-8", errors="replace").strip()
 
         if expected_response not in response:
-            logger.warning(
-                f"Unexpected response. Expected: {expected_response}, Actual: {response}"
-            )
+            logger.debug(f"Unexpected response. Expected: {expected_response}, Actual: {response}")
         else:
             logger.info(f"Command executed successfully: {expected_response}")
 
@@ -113,13 +114,52 @@ class SerialCommandExecutor:
     def execute(
         self,
         ser: serial.Serial,
-        command: bytes,
-        logger: Logger,
+        command: bytes ,
         expected_response: bytes,
-        timeout: int = 0,
+        timeout: int,
+        logger: Logger,
     ):
-        return self.strategy.execute(ser, command, logger, expected_response, timeout)
+        return self.strategy.execute(ser, command, expected_response, timeout, logger)
 
+def __check_ttyUSB_port(ser: serial.Serial, serial_executor: SerialCommandExecutor, prompt: str, timeout: int, logger: Logger):
+    try:
+        
+        received_data = serial_executor.execute(ser=ser, command= b"", expected_response=bytes(prompt, "utf-8"), timeout=timeout, logger=logger)
+
+        if prompt in received_data:
+            logger.debug(f"Prompt found: {received_data}")
+            return True
+        else:
+            return False
+
+    except serial.SerialException as e:
+        logger.error(f"Something unexpected happened while finding port: {e}")
+        return False
+
+
+
+def search_correct_ttyUSB_port(num_of_ports: int, serial_executor: SerialCommandExecutor, prompts: str | list[str], timeout: int, logger: Logger):
+
+    if isinstance(prompts, str):
+        prompts = [prompts]
+
+
+    for port_num in range(num_of_ports):
+        port = f"/dev/ttyUSB{port_num}"
+        logger.info(f"Trying port: {port}")
+        for prompt in prompts:
+            try:
+                with serial.Serial(port, **SERIAL_CONFIG) as ser:
+                    if __check_ttyUSB_port(ser, serial_executor, prompt, timeout, logger):
+                        logger.success(f"Found active port: {port_num}")
+                        return port
+            except serial.SerialException as e:
+                message = f"Something went wrong when trying searching correct ttyUSB port: {e} "
+                logger.warning(message)
+                raise serial.SerialException(message)
+            finally:
+                ser.close()
+    raise PortNotFoundError("No active port found.")
 
 def serial_command(
     ser: serial.Serial, cmd, logger: Logger, expected_response=b"\r", timeout=5
@@ -149,55 +189,6 @@ def serial_command(
     except serial.SerialException as e:
         raise CommandFailedError(f"Failed to execute serial command: {e}")
 
-
-def find_response_in_terminal_output(input: str, response: str) -> bool:
-    if input == None or response or None:
-        ValueError("Input and reponse cannot be None type")
-
-    lines = input.splitlines()
-    for line in lines:
-        if response in line.strip():
-            return True
-
-    return False
-
-
-def __find_ttyUSB_port(ser: serial.Serial, prompt: bytes, timeout: int, logger: Logger):
-    assert ser.is_open
-    current_timeout = ser.timeout
-    try:
-        logger.debug(f"Current timeout: {current_timeout}, changing to {timeout}")
-        ser.timeout = timeout
-
-        logger.info(f"Checking serial port with {prompt}...")
-        ser.read_until(prompt)
-        return True
-    except serial.SerialTimeoutException:
-        logger.debug(f"Timeout occurred while waiting for prompt: {prompt}")
-        return False
-    except serial.SerialException as e:
-        logger.error(f"Something unexpected happened while finding port: {e}")
-    finally:
-        ser.timeout = current_timeout
-        logger.debug(f"Timeout restored to {current_timeout}")
-
-
-def search_ttyUSB_port(num_of_ports: int, prompt: bytes, timeout: int, logger: Logger):
-    """Find the first active port that responds with the given prompt."""
-
-    for port_num in range(num_of_ports):
-        port = f"/dev/ttyUSB{port_num}"
-        logger.info(f"Trying port: {port}")
-
-        try:
-            with serial.Serial(port, **SERIAL_CONFIG) as ser:
-                if __find_ttyUSB_port(ser, prompt, timeout, logger):
-                    return port
-        except Exception as e:
-            raise e
-    raise PortNotFoundError("No active port found.")
-
-
 def filter_terminal_output(input: str, filter: str = ""):
     if input is None:
         return None
@@ -215,7 +206,6 @@ def filter_terminal_output(input: str, filter: str = ""):
     if len(filtered_lines) == 0:
         return None
     return "\n".join(filtered_lines)
-
 
 def find_active_ttyUSB_port(
     prompt, max_ports, logger: Logger, enter_checks: int = 3
@@ -250,7 +240,6 @@ def find_active_ttyUSB_port(
         time.sleep(0.1)
 
     raise PortNotFoundError("No active port found.")
-
 
 def execute_commands_on_ttyUSB_port(
     port_num, commands: list[str], expected_response, error_response, logger: Logger

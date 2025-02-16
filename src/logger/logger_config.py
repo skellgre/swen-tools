@@ -1,5 +1,5 @@
 import logging
-
+import subprocess
 # Define a new log level for success
 SUCCESS_LEVEL = 25  # You can use any number between 1-50
 logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
@@ -54,3 +54,7 @@ console_handler.setFormatter(formatter)
 
 # Add the handler to the logger
 logger.addHandler(console_handler)
+
+def lolcat_print(message):
+    """Print message using lolcat."""
+    subprocess.run(["lolcat", "-d", "2"], input=message, text=True)

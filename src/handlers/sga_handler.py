@@ -1,7 +1,12 @@
+import os
+import subprocess
 from logging import Logger
+from logger.logger_config import lolcat_print
 import serial
 import time
 from utils.minicom import *
+
+SUDO_PASSWORD = os.getenv("SUDO_PASSWORD")
 
 SERIAL_CONFIG = {
     "baudrate": 115200,
@@ -55,25 +60,23 @@ def serial_command(ser: serial.Serial, cmd, logger: Logger):
     return ser
 
 
-def check_sga_pre_state(ser: serial.Serial, logger: Logger) -> str:
+def check_sga_pre_state(ser: serial.Serial, serial_executor: SerialCommandStrategy, logger: Logger) -> str:
     logger.info(f"Checking SGA pre-state...")
-
-    ser.write(b"\r")
-    time.sleep(5)
-
-    output = ser.read(ser.in_waiting or 1024).decode("utf-8", errors="replace").strip()
-    logger.debug(f"Received: {output}")
+    
+    output = serial_executor.execute(ser, b"\x04", b"login", timeout=2, logger=logger)
+    #serial_executor.execute(ser=ser, command=b"\r", logger=logger, expected_response="", timeout=1)
+    # output = ser.read(ser.in_waiting or 1024).decode("utf-8", errors="replace").strip()
 
     if "login" in output.lower():
-        logger.info("Login prompt detected.")
+        logger.debug("Login prompt detected.")
         return "login_required"
 
     elif "$" in output:
-        logger.info("Already logged in (bash shell detected).")
+        logger.debug("Already logged in (bash shell detected).")
         return "logged_in"
 
     elif "=>" in output:
-        logger.info("Already in SGA environment (special prompt detected).")
+        logger.debug("Already in SGA environment (special prompt detected).")
         return "uboot"
 
     else:
@@ -81,25 +84,23 @@ def check_sga_pre_state(ser: serial.Serial, logger: Logger) -> str:
         return "unknown"
 
 
-def login_user(ser: serial.Serial, user: str, password, logger: Logger):
+def login_user(ser: serial.Serial, serial_executor: SerialCommandStrategy, user: str, password: str, logger: Logger):
     logger.info("Logging in...")
-    serial_command(ser, bytes(user, "utf-8"), logger)
-    serial_command(ser, bytes(password, "utf-8"), logger)
+    serial_executor.execute(ser, bytes(user, "utf-8"), b"", 1, logger)
+    serial_executor.execute(ser, bytes(password, "utf-8"), b"$", 1, logger)
 
 
-def enter_uboot(ser: serial.Serial, logger: Logger):
+
+def enter_uboot(ser: serial.Serial, serial_executor: SerialCommandStrategy, timeout, logger: Logger):
     logger.info("Rebooting and entering U-Boot mode...")
 
-    serial_command(ser, b"sudo reboot", logger)
-
-    timeout = 10  # Maximum time to wait in seconds
+    serial_executor.execute(ser, b"sudo reboot", b"", timeout=0, logger=logger)
     start_time = time.time()
-
-    logger.info("Sending ESC key to interrupt boot process...")
+    logger.debug("Sending ESC key to interrupt boot process...")
 
     while time.time() - start_time < timeout:
         ser.write(b"\x1b")  # ESC key
-        time.sleep(0.5)  # Adjust timing if needed
+        time.sleep(0.5)
 
         output = ser.read(ser.in_waiting or 1024).decode("utf-8", errors="replace")
         logger.debug(f"Received: {output}")
@@ -112,57 +113,78 @@ def enter_uboot(ser: serial.Serial, logger: Logger):
     return False
 
 
-def uboot_flash(ser, logger: Logger):
+def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
     """flash SGA"""
     logger.info("Preparing to flash SGA")
 
-    serial_command(ser, b"\rmw 0x2A30000 0;\r", logger)
-    serial_command(ser, b"setenv serverip 169.254.4.30", logger)
-    serial_command(ser, b"setenv ipaddr 169.254.4.10", logger)
-    serial_command(ser, b"tftpboot nvOTAscript.img", logger)
-    time.sleep(20)  # ToDO
+    serial_executor.execute(ser, b"", b"", 1 ,logger)
+    serial_executor.execute(ser, b"mw 0x2A30000 0", b"", 1 ,logger)
+    serial_executor.execute(ser, b"setenv serverip 169.254.4.30", b"", 1, logger)
+    serial_executor.execute(ser, b"setenv ipaddr 169.254.4.10", b"", 1, logger)
+    serial_executor.execute(ser, b"tftpboot nvOTAscript.img", b"done", 20, logger)
+
+    #time.sleep(20)  # ToDO
     logger.info("Starting the SGA flashing process")
-    serial_command(ser, b"source 0x90000000\r", logger)
+    #serial_executor.execute(ser, b"source 0x90000000\r", "", 1, logger)
     print("flashing (this takes several minutes) ...")
+
+def _find_sga_port(serial_executor: SerialCommandExecutor, logger: Logger):
+    return search_correct_ttyUSB_port(6, serial_executor, ["DoIP-VCC", "=>"], 0.5, logger)
+
+def unblock_firewall_for_file_transerffering(password: str):
+    try:
+        command = ["sudo", "-S", "iptables", "-A", "INPUT", "-p", "udp", "--dport", "69", "-j", "ACCEPT"]
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        process.stdin.write(f"{SUDO_PASSWORD}\n")
+        process.stdin.flush()
+        print("Rule added successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing command: {e}")
 
 
 def flash_sga(logger: Logger):
     try:
+        unblock_firewall_for_file_transerffering(SUDO_PASSWORD)
+        lolcat_print("Flashing nicely")
         serial_strategy = BasicSerialCommand()
         serial_executor = SerialCommandExecutor(serial_strategy)
 
-        # port_num = search_ttyUSB_port(
-        #    num_of_ports=5, prompt=b"DoIP-VCC", timeout=5, logger=logger
-        # )
-        # port = f"/dev/ttyUSB{port_num}"
-        # logger.info(f"Connecting to {port} for command execution.")
-        # user = "swupdate"
-        # password = "swupdate"
-        port = search_ttyUSB_port(6, b"DoIP-VCC", 5, logger)
+        user = "swupdate"
+        password = "swupdate"
+        reset_uboot_timeout = 15
+        enter_ubut_timeout = 15
+        port = _find_sga_port(serial_executor, logger)
 
-        return
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
 
-            serial_executor.execute(ser, b"\x04", logger, "login", timeout=2)
-            return
-            prestate = check_sga_pre_state(ser, logger)
+            prestate = check_sga_pre_state(ser, serial_executor, logger)
             logged_in = False
 
             if prestate == "uboot":
                 logger.warning("SGA stuck in uboot, resetting...")
-                serial_command(ser, b"reset\r", logger)
+                serial_executor.execute(ser, b"reset\r", b"login", reset_uboot_timeout, logger)
+                login_user(ser, serial_executor, user, password, logger)
+                logged_in = True
 
             if prestate == "login_required":
-                login_user(ser, user, password, logger)
+                login_user(ser, serial_executor, user, password, logger)
                 logged_in = True
 
             if logged_in or prestate == "logged_in":
-                enter_uboot(ser, logger)
+                if enter_uboot(ser, serial_executor, enter_ubut_timeout, logger):
+                    uboot_flash(ser, serial_executor, logger)
+                    
             else:
-                pass  # unknown command
+                raise Exception("Failed to check SGA prestate")
 
     except serial.SerialException as e:
-        logger.error(f"Error communicating with port {port_num}: {e}")
+        logger.error(f"Error communicating with port {port}: {e}")
         raise
     finally:
         ser.close()
