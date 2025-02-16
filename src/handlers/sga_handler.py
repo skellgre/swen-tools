@@ -131,14 +131,16 @@ def flash_sga(logger: Logger):
         serial_strategy = BasicSerialCommand()
         serial_executor = SerialCommandExecutor(serial_strategy)
 
-        port_num = search_ttyUSB_port(
-            num_of_ports=5, prompt=b"DoIP-VCC", timeout=5, logger=logger
-        )
-        port = f"/dev/ttyUSB{port_num}"
-        logger.info(f"Connecting to {port} for command execution.")
-        user = "swupdate"
-        password = "swupdate"
+        # port_num = search_ttyUSB_port(
+        #    num_of_ports=5, prompt=b"DoIP-VCC", timeout=5, logger=logger
+        # )
+        # port = f"/dev/ttyUSB{port_num}"
+        # logger.info(f"Connecting to {port} for command execution.")
+        # user = "swupdate"
+        # password = "swupdate"
+        port = search_ttyUSB_port(6, b"DoIP-VCC", 5, logger)
 
+        return
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
 
             serial_executor.execute(ser, b"\x04", logger, "login", timeout=2)
