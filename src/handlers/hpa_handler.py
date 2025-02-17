@@ -1,6 +1,7 @@
 import serial
 import time
 from utils.minicom import *
+from logger.logger_config import super_message
 from datetime import datetime
 import subprocess
 import sys
@@ -35,7 +36,7 @@ FLASH_ARGS = "c-sample"
 ACTIVATE_RECOVERY_MODE_COMMANDS = ["tegrarecovery x1 on", "tegrareset x1"]
 DEACTIVATE_RECOVERY_MODE_COMMANDS = ["tegrarecovery x1 off", "tegrareset x1"]
 PROMT = "GoForHIA>"
-HPA_PASSWORD = os.getenv("HPA_PASSWORD")
+SUDO_PASSWORD = os.getenv("SUDO_PASSWORD")
 
 
 def run_flash_script(script_path, args, logger: Logger):
@@ -47,9 +48,11 @@ def run_flash_script(script_path, args, logger: Logger):
         args (list): A list of arguments to pass to the script.
     """
     logger.info("Running flash script...")
+    super_message("Flashing HPA...")
     process = None
     try:
         command = ["sudo", "-S", script_path, args]
+        print(command)
 
         process = subprocess.Popen(
             command,
@@ -60,8 +63,9 @@ def run_flash_script(script_path, args, logger: Logger):
         )
 
         # Provide the password and stream output live
-        process.stdin.write(f"{HPA_PASSWORD}\n")
+        process.stdin.write(f"{SUDO_PASSWORD}\n")
         process.stdin.flush()
+
 
         for line in iter(process.stdout.readline, ""):
             logger.info(line.strip())
@@ -100,13 +104,19 @@ def bootburn_hpa(logger: Logger):
         
         #ser.close()
 
-        active_port = find_active_ttyUSB_port("GoForHIA>", 6, logger)
-        activate_result = execute_commands_on_ttyUSB_port(active_port, ACTIVATE_RECOVERY_MODE_COMMANDS)
-        print(activate_result)
+        port = search_correct_ttyUSB_port(6, executor, "GoForHIA>", 0.5, logger)
 
-        run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS)
-        deactivate_result = execute_commands_on_ttyUSB_port(active_port, DEACTIVATE_RECOVERY_MODE_COMMANDS)
-        print(deactivate_result)
+        with serial.Serial(port, **SERIAL_CONFIG) as ser:
+
+            # activate_result = execute_commands_on_ttyUSB_port(active_port, ACTIVATE_RECOVERY_MODE_COMMANDS)
+            executor.execute(ser, b"tegrarecovery x1 on", b"Command Executed", 2, logger)
+            executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
+            # print(activate_result)
+
+            run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS, logger)
+            executor.execute(ser, b"tegrarecovery x1 off", b"Command Executed", 2, logger)
+            executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
+
 
         logger.info("HPA bootburn completed successfully!")
     except PortNotFoundError:

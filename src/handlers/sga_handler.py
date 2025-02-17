@@ -1,7 +1,7 @@
 import os
 import subprocess
 from logging import Logger
-from logger.logger_config import lolcat_print
+from logger.logger_config import super_message
 import serial
 import time
 from utils.minicom import *
@@ -114,7 +114,7 @@ def enter_uboot(ser: serial.Serial, serial_executor: SerialCommandStrategy, time
 
 
 def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
-    """flash SGA"""
+    """Flash SGA"""
     logger.info("Preparing to flash SGA")
 
     serial_executor.execute(ser, b"", b"", 1 ,logger)
@@ -123,10 +123,12 @@ def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
     serial_executor.execute(ser, b"setenv ipaddr 169.254.4.10", b"", 1, logger)
     serial_executor.execute(ser, b"tftpboot nvOTAscript.img", b"done", 20, logger)
 
+    flashing_time = 60 * 10 # 10 min
     #time.sleep(20)  # ToDO
-    logger.info("Starting the SGA flashing process")
-    #serial_executor.execute(ser, b"source 0x90000000\r", "", 1, logger)
-    print("flashing (this takes several minutes) ...")
+    logger.debug("Starting the SGA flashing process")
+    super_message("Flashing SGA...")
+    serial_executor.execute(ser, b"source 0x90000000\r", b"login", flashing_time, logger)
+    
 
 def _find_sga_port(serial_executor: SerialCommandExecutor, logger: Logger):
     return search_correct_ttyUSB_port(6, serial_executor, ["DoIP-VCC", "=>"], 0.5, logger)
@@ -151,7 +153,6 @@ def unblock_firewall_for_file_transerffering(password: str):
 def flash_sga(logger: Logger):
     try:
         unblock_firewall_for_file_transerffering(SUDO_PASSWORD)
-        lolcat_print("Flashing nicely")
         serial_strategy = BasicSerialCommand()
         serial_executor = SerialCommandExecutor(serial_strategy)
 

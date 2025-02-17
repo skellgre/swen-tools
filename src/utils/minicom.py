@@ -47,13 +47,14 @@ class BasicSerialCommand(SerialCommandStrategy):
         logger: Logger,
     ):
         assert ser.is_open
-        start_time = time.time()
+     
         ser.write(command + b"\r")
         ser.flush()
         logger.debug(f"Executed command over serial: '{command}'")
 
         response = b""
-
+        
+        start_time = time.time()
         while time.time() - start_time < timeout:
            # data = ser.read(ser.in_waiting or 1)  # Read available bytes (or 1 byte)
             data = ser.read_all()
@@ -83,26 +84,33 @@ class CharacterByCharacterSerialCommand(SerialCommandStrategy):
         logger: Logger,
     ):
         assert ser.is_open
-        ser.timeout = timeout
-        time.sleep(0.1)
 
-        logger.debug(f"Executing command char-by-char: '{command}'")
         for c in command:
             ser.write(bytes([c]))  # Send one character at a time
             time.sleep(0.1)
 
         ser.write(b"\r")
         ser.flush()
+        logger.debug(f"Executed command over serial: '{command}'")
 
-        time.sleep(1)
-        response = ser.read_all().decode("utf-8", errors="replace").strip()
+        response = b""
 
-        if expected_response not in response:
-            logger.debug(f"Unexpected response. Expected: {expected_response}, Actual: {response}")
-        else:
-            logger.info(f"Command executed successfully: {expected_response}")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+           # data = ser.read(ser.in_waiting or 1)  # Read available bytes (or 1 byte)
+            data = ser.read_all()
+            if data:
+                response += data
+                decoded_response = response.decode("utf-8", errors="replace").strip()
 
-        return response
+                if expected_response in response:
+                    logger.debug(f"Expected response received after command: {decoded_response}")
+                    return decoded_response
+
+            time.sleep(0.05)  # Short delay to prevent CPU overuse
+
+        logger.debug(f"Timeout reached! Expected: {expected_response.decode()}, Received: {response.decode('utf-8', errors='replace').strip()}")
+        return response.decode("utf-8", errors="replace").strip()
 
 
 class SerialCommandExecutor:

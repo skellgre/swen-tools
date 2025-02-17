@@ -55,6 +55,6 @@ console_handler.setFormatter(formatter)
 # Add the handler to the logger
 logger.addHandler(console_handler)
 
-def lolcat_print(message):
-    """Print message using lolcat."""
-    subprocess.run(["lolcat", "-d", "2"], input=message, text=True)
+def super_message(message):
+    command = f"figlet -f slant {message} | lolcat -d 2"
+    subprocess.run(command, shell=True)
