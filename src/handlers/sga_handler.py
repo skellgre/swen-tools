@@ -50,22 +50,11 @@ def wait_sga_running(ser, quiet):
     function_failure("ERROR: OBD port (13400) is not up")
 
 
-def serial_command(ser: serial.Serial, cmd, logger: Logger):
-    assert ser.is_open
-    time.sleep(0.1)
-    ser.write(cmd + b"\r")
-    ser.flush()
-    logger.debug(f"Executed command over serial: '{cmd}'")
-
-    return ser
-
 
 def check_sga_pre_state(ser: serial.Serial, serial_executor: SerialCommandStrategy, logger: Logger) -> str:
     logger.info(f"Checking SGA pre-state...")
     
-    output = serial_executor.execute(ser, b"\x04", b"login", timeout=2, logger=logger)
-    #serial_executor.execute(ser=ser, command=b"\r", logger=logger, expected_response="", timeout=1)
-    # output = ser.read(ser.in_waiting or 1024).decode("utf-8", errors="replace").strip()
+    _, output = serial_executor.execute(ser, b"\x04", b"login", timeout=2, logger=logger)
 
     if "login" in output.lower():
         logger.debug("Login prompt detected.")
@@ -123,17 +112,25 @@ def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
     serial_executor.execute(ser, b"setenv ipaddr 169.254.4.10", b"", 1, logger)
     serial_executor.execute(ser, b"tftpboot nvOTAscript.img", b"done", 20, logger)
 
-    flashing_time = 60 * 10 # 10 min
+    flashing_time = 60 * 8 # 7 minutes
     #time.sleep(20)  # ToDO
     logger.debug("Starting the SGA flashing process")
-    super_message("Flashing SGA...")
-    serial_executor.execute(ser, b"source 0x90000000\r", b"login", flashing_time, logger)
+    super_message("Flashing SGA")
+    start_time = time.time()
+    success, _ = serial_executor.execute(ser, b"source 0x90000000\r", b"login", flashing_time, logger)
+    end_time = time.time()
+    if success:
+        super_message("Done!")
+    else:
+        logger.error("Failed to flash SGA")
+    return end_time - start_time
+    
     
 
 def _find_sga_port(serial_executor: SerialCommandExecutor, logger: Logger):
     return search_correct_ttyUSB_port(6, serial_executor, ["DoIP-VCC", "=>"], 0.5, logger)
 
-def unblock_firewall_for_file_transerffering(password: str):
+def unblock_firewall_for_file_transerffering(password: str, logger: Logger):
     try:
         command = ["sudo", "-S", "iptables", "-A", "INPUT", "-p", "udp", "--dport", "69", "-j", "ACCEPT"]
         process = subprocess.Popen(
@@ -143,23 +140,23 @@ def unblock_firewall_for_file_transerffering(password: str):
             stderr=subprocess.PIPE,
             text=True
         )
-        process.stdin.write(f"{SUDO_PASSWORD}\n")
+        process.stdin.write(f"{password}\n")
         process.stdin.flush()
-        print("Rule added successfully.")
+        logger.info("Successfully unblocked firewall for file transfer.")
     except subprocess.CalledProcessError as e:
-        print(f"Error executing command: {e}")
+        logger.warning(f"Error executing command: {e}")
 
 
 def flash_sga(logger: Logger):
     try:
-        unblock_firewall_for_file_transerffering(SUDO_PASSWORD)
+        unblock_firewall_for_file_transerffering(SUDO_PASSWORD, logger)
         serial_strategy = BasicSerialCommand()
         serial_executor = SerialCommandExecutor(serial_strategy)
 
         user = "swupdate"
         password = "swupdate"
         reset_uboot_timeout = 15
-        enter_ubut_timeout = 15
+        enter_uboot_timeout = 15
         port = _find_sga_port(serial_executor, logger)
 
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
@@ -178,14 +175,17 @@ def flash_sga(logger: Logger):
                 logged_in = True
 
             if logged_in or prestate == "logged_in":
-                if enter_uboot(ser, serial_executor, enter_ubut_timeout, logger):
-                    uboot_flash(ser, serial_executor, logger)
+                if enter_uboot(ser, serial_executor, enter_uboot_timeout, logger):
+                    total_time = uboot_flash(ser, serial_executor, logger)
+                    formatted_time = time.strftime("%H:%M:%S", time.gmtime(total_time))
+                    logger.info("Total time: ", formatted_time)
                     
             else:
-                raise Exception("Failed to check SGA prestate")
+                logger.warning("Failed to check SGA prestate")
 
     except serial.SerialException as e:
         logger.error(f"Error communicating with port {port}: {e}")
-        raise
-    finally:
-        ser.close()
+    except PortNotFoundError:
+        pass
+
+        

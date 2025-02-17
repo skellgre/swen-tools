@@ -77,8 +77,10 @@ def main():
         elif ecu == "SGA":
             sga_handler.flash_sga(logger)
 
+    except KeyboardInterrupt:
+        logger.info("swen-tools interrupted by user.")
     except Exception as e:
-        print(f"Failed to bootburn {ecu}: ", e)
+        logger.error(f"Failed to bootburn {ecu}: ", e)
 
 
 if __name__ == "__main__":

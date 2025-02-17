@@ -49,7 +49,7 @@ console_handler = ColorizingStreamHandler()
 console_handler.setLevel(logging.DEBUG)
 
 # Create a formatter
-formatter = logging.Formatter("[%(asctime)s - %(name)s - %(levelname)s] - %(message)s")
+formatter = logging.Formatter("[%(asctime)s] - %(name)s - %(levelname)s - %(message)s")
 console_handler.setFormatter(formatter)
 
 # Add the handler to the logger

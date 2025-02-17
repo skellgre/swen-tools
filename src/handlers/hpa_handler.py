@@ -48,12 +48,12 @@ def run_flash_script(script_path, args, logger: Logger):
         args (list): A list of arguments to pass to the script.
     """
     logger.info("Running flash script...")
-    super_message("Flashing HPA...")
     process = None
     try:
         command = ["sudo", "-S", script_path, args]
-        print(command)
-
+        
+        super_message("Flashing HPA")
+        start_time = time.time()
         process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -68,7 +68,7 @@ def run_flash_script(script_path, args, logger: Logger):
 
 
         for line in iter(process.stdout.readline, ""):
-            logger.info(line.strip())
+            logger.debug(line.strip())
 
         for error_line in iter(process.stderr.readline, ""):
             logger.error(error_line.strip())
@@ -77,7 +77,9 @@ def run_flash_script(script_path, args, logger: Logger):
         if process.returncode != 0:
             raise FlashScriptError("Flash script execution failed.")
 
-        logger.info("Flash script completed successfully.")
+        logger.debug("Flash script completed successfully.")
+        end_time = time.time()
+        return end_time - start_time
     except Exception as e:
         logger.error(f"Flash script failed with error: {e}")
         raise FlashScriptError("Flash script execution failed.") from e
@@ -96,14 +98,6 @@ def bootburn_hpa(logger: Logger):
         strategy = CharacterByCharacterSerialCommand()
         executor = SerialCommandExecutor(strategy)
 
-        
-
-        #port = f"/dev/ttyUSB{port}"
-        #with serial.Serial(port, **SERIAL_CONFIG) as ser:
-        #    executor.execute(ser, b"test", logger, "Error unknown command: t")
-        
-        #ser.close()
-
         port = search_correct_ttyUSB_port(6, executor, "GoForHIA>", 0.5, logger)
 
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
@@ -113,12 +107,15 @@ def bootburn_hpa(logger: Logger):
             executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
             # print(activate_result)
 
-            run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS, logger)
+            total_time = run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS, logger)
             executor.execute(ser, b"tegrarecovery x1 off", b"Command Executed", 2, logger)
             executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
 
 
-        logger.info("HPA bootburn completed successfully!")
+        logger.debug("HPA bootburn completed successfully.")
+        super_message("Done!")
+        formatted_time = time.strftime("%H:%M:%S", time.gmtime(total_time))
+        logger.info("Total time: ", formatted_time)
     except PortNotFoundError:
         pass
     except CommandFailedError:
