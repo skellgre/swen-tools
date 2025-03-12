@@ -1,15 +1,21 @@
-import serial
-import time
-from utils.minicom import *
-from logger.logger_config import super_message
-from datetime import datetime
-import subprocess
-import sys
-from dotenv import load_dotenv
 import os
+import sys
+import time
+import subprocess
+
+import serial
+from logging import Logger
+from dotenv import load_dotenv
+
+from utils.minicom import CharacterByCharacterSerialCommand, SerialCommandExecutor, search_correct_ttyUSB_port
+from utils.progress_bar import ProgressBar
+from exceptions.exceptions import FlashScriptError, PortNotFoundError, CommandFailedError
+from logger.logger_config import super_message
+from swut.cli.cli_handler import CliHandler
+
 
 load_dotenv()
-
+progress_bar = ProgressBar()
 
 # Serial configuration
 SERIAL_CONFIG = {
@@ -22,14 +28,6 @@ SERIAL_CONFIG = {
     "xonxoff": False,
 }
 
-class PortNotFoundError(Exception):
-    pass
-
-class CommandFailedError(Exception):
-    pass
-
-class FlashScriptError(Exception):
-    pass
 
 HPA_FLASH_FILEPATH = os.getenv("HPA_FLASH_FILEPATH")
 FLASH_ARGS = "c-sample"
@@ -47,12 +45,13 @@ def run_flash_script(script_path, args, logger: Logger):
         script_path (str): The full path to the script to execute.
         args (list): A list of arguments to pass to the script.
     """
+
     logger.info("Running flash script...")
     process = None
     try:
         command = ["sudo", "-S", script_path, args]
         
-        super_message("Flashing HPA")
+       
         start_time = time.time()
         process = subprocess.Popen(
             command,
@@ -62,11 +61,14 @@ def run_flash_script(script_path, args, logger: Logger):
             text=True
         )
 
+        
         # Provide the password and stream output live
         process.stdin.write(f"{SUDO_PASSWORD}\n")
         process.stdin.flush()
 
-
+        super_message("Flashing HPA")
+        flashing_time = 3 * 60 + 5
+        progress_bar.start(flashing_time)
         for line in iter(process.stdout.readline, ""):
             logger.debug(line.strip())
 
@@ -79,9 +81,11 @@ def run_flash_script(script_path, args, logger: Logger):
 
         logger.debug("Flash script completed successfully.")
         end_time = time.time()
+        progress_bar.stop()
         return end_time - start_time
     except Exception as e:
         logger.error(f"Flash script failed with error: {e}")
+        progress_bar.stop(done=False)
         raise FlashScriptError("Flash script execution failed.") from e
     finally:
         if process and process.stdin:
@@ -91,37 +95,38 @@ def run_flash_script(script_path, args, logger: Logger):
         if process and process.stderr:
             process.stderr.close()
 
-def bootburn_hpa(logger: Logger):
+def flash_hpa(logger: Logger):
     """Main procedure to automate the flashing process."""
     try:
-
+        cli_handler = CliHandler(interactive_cli_mode=False)
+        # exitcode, response = cli_handler.execute_cli_command(flash_local_files_try_1())
         strategy = CharacterByCharacterSerialCommand()
         executor = SerialCommandExecutor(strategy)
-
-        port = search_correct_ttyUSB_port(6, executor, "GoForHIA>", 0.5, logger)
+        port = search_correct_ttyUSB_port(7, executor, "GoForHIA>", 0.5, logger)
 
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
-
-            # activate_result = execute_commands_on_ttyUSB_port(active_port, ACTIVATE_RECOVERY_MODE_COMMANDS)
-            executor.execute(ser, b"tegrarecovery x1 on", b"Command Executed", 2, logger)
-            executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
-            # print(activate_result)
+            executor.execute(ser, b"tegrarecovery x1 on", b"Command Executed", 5, logger)
+            executor.execute(ser, b"tegrareset x1", b"Command Executed", 5, logger)
 
             total_time = run_flash_script(HPA_FLASH_FILEPATH, FLASH_ARGS, logger)
+            
             executor.execute(ser, b"tegrarecovery x1 off", b"Command Executed", 2, logger)
             executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
-
+ 
 
         logger.debug("HPA bootburn completed successfully.")
         super_message("Done!")
         formatted_time = time.strftime("%H:%M:%S", time.gmtime(total_time))
-        logger.info("Total time: ", formatted_time)
+        logger.info(f"Total time: {formatted_time}")
+
     except PortNotFoundError:
         pass
     except CommandFailedError:
         pass
     except FlashScriptError:
-        pass
+        with serial.Serial(port, **SERIAL_CONFIG) as ser:
+            executor.execute(ser, b"tegrarecovery x1 off", b"Command Executed", 2, logger)
+            executor.execute(ser, b"tegrareset x1", b"Command Executed", 2, logger)
     except KeyboardInterrupt:
         logger.info("Script interrupted by user. Exiting.")
         sys.exit(1)

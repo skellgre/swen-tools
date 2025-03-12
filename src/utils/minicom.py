@@ -87,10 +87,12 @@ class CharacterByCharacterSerialCommand(SerialCommandStrategy):
 
         for c in command:
             ser.write(bytes([c]))  # Send one character at a time
-            time.sleep(0.1)
+            time.sleep(0.2)
 
         ser.write(b"\r")
+        time.sleep(0.2)
         ser.flush()
+        
         logger.debug(f"Executed command over serial: '{command}'")
 
         response = b""
@@ -160,6 +162,7 @@ def search_correct_ttyUSB_port(num_of_ports: int, serial_executor: SerialCommand
                 with serial.Serial(port, **SERIAL_CONFIG) as ser:
                     if __check_ttyUSB_port(ser, serial_executor, prompt, timeout, logger):
                         logger.success(f"Found active port: {port_num}")
+                        ser.close()
                         return port
             except serial.SerialException as e:
                 message = f"Something went wrong when trying searching correct ttyUSB port: {e} "

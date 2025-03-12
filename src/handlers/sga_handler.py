@@ -5,17 +5,13 @@ from logger.logger_config import super_message
 import serial
 import time
 from utils.minicom import *
+from utils.progress_bar import ProgressBar
 
 SUDO_PASSWORD = os.getenv("SUDO_PASSWORD")
+progress_bar = ProgressBar()
 
 SERIAL_CONFIG = {
-    "baudrate": 115200,
-    "bytesize": serial.EIGHTBITS,
-    "parity": serial.PARITY_NONE,
-    "stopbits": serial.STOPBITS_ONE,
-    "timeout": 10,
-    "rtscts": False,
-    "xonxoff": False,
+    "baudrate": 115200
 }
 
 
@@ -102,8 +98,11 @@ def enter_uboot(ser: serial.Serial, serial_executor: SerialCommandStrategy, time
     return False
 
 
-def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
-    """Flash SGA"""
+def uboot_flash_old(ser, serial_executor: SerialCommandExecutor, logger: Logger):
+    """Flash SGA
+    
+    Deprecated
+    """
     logger.info("Preparing to flash SGA")
 
     serial_executor.execute(ser, b"", b"", 1 ,logger)
@@ -124,7 +123,29 @@ def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
     else:
         logger.error("Failed to flash SGA")
     return end_time - start_time
-    
+
+def uboot_flash(ser, serial_executor: SerialCommandExecutor, logger: Logger):
+    """Flash SGA"""
+    logger.info("Preparing to flash SGA")
+
+    serial_executor.execute(ser, b"", b"", 1 ,logger)
+    serial_executor.execute(ser, b"run init_script", b"", 1 ,logger)
+
+    flashing_time = 60 * 8 # 8 minutes
+    #time.sleep(20)  # ToDO
+    logger.debug("Starting the SGA flashing process")
+    super_message("Flashing SGA")
+    progress_bar.start(flashing_time)
+    start_time = time.time()
+    success, _ = serial_executor.execute(ser, b"source 0x90000000\r", b"login", flashing_time, logger)
+    end_time = time.time()
+    if success:
+        progress_bar.stop()
+        super_message("Done!")
+    else:
+        progress_bar.stop()
+        logger.error("Failed to flash SGA")
+    return end_time - start_time
     
 
 def _find_sga_port(serial_executor: SerialCommandExecutor, logger: Logger):
@@ -156,7 +177,7 @@ def flash_sga(logger: Logger):
         user = "swupdate"
         password = "swupdate"
         reset_uboot_timeout = 15
-        enter_uboot_timeout = 15
+        enter_uboot_timeout = 30
         port = _find_sga_port(serial_executor, logger)
 
         with serial.Serial(port, **SERIAL_CONFIG) as ser:
@@ -178,7 +199,7 @@ def flash_sga(logger: Logger):
                 if enter_uboot(ser, serial_executor, enter_uboot_timeout, logger):
                     total_time = uboot_flash(ser, serial_executor, logger)
                     formatted_time = time.strftime("%H:%M:%S", time.gmtime(total_time))
-                    logger.info("Total time: ", formatted_time)
+                    logger.info(f"Total time: {formatted_time}")
                     
             else:
                 logger.warning("Failed to check SGA prestate")

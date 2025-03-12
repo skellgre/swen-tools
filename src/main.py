@@ -1,10 +1,12 @@
 import argparse
 import subprocess
-import sys
+import os
+import yaml
 from handlers import dhu_handler, hix_handler, hpa_handler, sga_handler
-from utils.playbook import Playbook, PlaybookNode
 from logger.logger_config import logger
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+config_path = os.path.join(ROOT_DIR, "swen_tools_config.yaml")
 
 def print_stylized_text():
     """Print the SWEN-TOOLS header."""
@@ -15,39 +17,38 @@ def print_stylized_text():
 def main():
     try:
         print_stylized_text()
+
+        with open(config_path, "r") as file:
+            configuration = yaml.safe_load(file)
+
+
         parser = argparse.ArgumentParser(description="SWEN-TOOLS")
-        # Add a subparser for task-specific options
-        subparsers = parser.add_subparsers(
-            dest="ecu", required=True, help="ECU:s to bootburn"
-        )
+
         parser.add_argument(
             "--log-level",
             "-ll",
-            type=str,
-            default="DEBUG",
+            default="INFO",
             choices=["INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"],
             help="Set the logging level (default: INFO)",
         )
 
-        # Subparser for DHU
-        dhu_parser = subparsers.add_parser("DHU", help="Bootburn DHU")
-        dhu_parser.add_argument(
-            "--node, -n",
-            required=True,
-            type=str,
-            help="Choose specific node (dhuh, dhum)",
-            choices=["h", "m"],
-        )
-        dhu_parser.add_argument(
-            "--type, -t",
-            required=True,
-            type=str,
-            help="Choose type designation",
-            choices=["polestar", "p", "volvo", "v"],
+        # Add a subparser for task-specific options
+        subparsers = parser.add_subparsers(
+            dest="ecu", required=True, help="ECU:s to bootburn"
         )
 
+        # Subparser for DHU
+        dhuh_parser = subparsers.add_parser("DHUH", aliases= ["dhuh"], help="Bootburn DHUH")
+        dhuh_parser.add_argument("--type", "-t", required=True, type=str,help="Choose type designation", choices=["polestar", "p", "volvo", "v"],)
+        dhuh_parser.add_argument("--sw_path", type=str, help="Path to software (Optional)")
+
+        dhum_parser = subparsers.add_parser("DHUM", aliases= ["dhum"], help="Bootburn DHUM")
+        dhum_parser.add_argument("--type", "-t",required=True, type=str,help="Choose type designation", choices=["polestar", "p", "volvo", "v"],)
+        dhum_parser.add_argument("--sw_path", type=str, help="Path to software (Optional)")
+        dhum_parser.add_argument("--commit", "-c", type=bool, help="Commit DHUM, default: True")
+
         # Subparser for Task B
-        hix_parser = subparsers.add_parser("HIX", help="Bootburn HIX")
+        hix_parser = subparsers.add_parser("HIX", aliases= ["hix"], help="Bootburn HIX")
         hix_parser.add_argument(
             "--node, -n",
             required=True,
@@ -59,21 +60,54 @@ def main():
         subparsers.add_parser("HPA", help="Bootburn HPA")
 
         sga_parser = subparsers.add_parser("SGA", aliases=["sga"], help="Bootburn SGA")
-        args = parser.parse_args()
 
-        logger.setLevel(level=args.log_level)
+
+        args = parser.parse_args()
+        logger.setLevel(level= args.log_level)
 
         if args.ecu:
             args.ecu = args.ecu.upper()
 
         ecu: str = args.ecu
 
-        if ecu == "DHU":
-            dhu_handler.flash_dhuh()
+        dhu_script_filepath = configuration["handlers"]["dhu_handler"]["script_filepath"]
+        type_designation = args.type
+
+        if ecu == "DHUH":
+            config_args = ""
+            for arg in configuration["handlers"]["dhu_handler"]["arguments"]["dhuh"]:
+                config_args += arg + " "
+
+            yaml_data = configuration["handlers"]["dhu_handler"]["software"]["type_designation"]
+            sw_filepath = yaml_data[type_designation]["dhuh_sw_filepath"]
+            custom_sw_filepath = args.sw_path
+            dhu_handler.flash_dhuh(
+                script_path=dhu_script_filepath,
+                args=config_args,
+                software_filepath=custom_sw_filepath if custom_sw_filepath else sw_filepath,
+                logger=logger
+            )
+        elif ecu == "DHUM":
+            config_args = ""
+            for arg in configuration["handlers"]["dhu_handler"]["arguments"]["dhum"]:
+                config_args += arg + " "
+
+            yaml_data = configuration["handlers"]["dhu_handler"]["software"]["type_designation"]
+            sw_filepath = yaml_data[type_designation]["dhum_sw_filepath"]
+            custom_sw_filepath = args.sw_path
+            commit = args.commit
+            print("COMMIT", commit)
+            dhu_handler.flash_dhum(
+                script_path=dhu_script_filepath,
+                args=config_args,
+                software_filepath=custom_sw_filepath if custom_sw_filepath else sw_filepath, 
+                commit=commit if commit else True,
+                logger=logger
+            )        
         elif ecu == "HIX":
             pass
         elif ecu == "HPA":
-            hpa_handler.bootburn_hpa(logger)
+            hpa_handler.flash_hpa(logger)
         elif ecu == "SGA":
             sga_handler.flash_sga(logger)
 

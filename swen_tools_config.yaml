@@ -1,0 +1,32 @@
+handlers:
+  dhu_handler:
+    script_filepath: "/home/itahil/REPO/tools/volvo/docker_image/run.sh"
+    arguments:
+      dhuh:
+        - "--multiuser"
+        - "dhuh_update"
+        - "--uds-transport serial"
+      dhum:
+        - "--multiuser"
+        - "moose_update"
+        - "--qdl"
+    software:
+      type_designation:
+        polestar:
+          dhuh_sw_filepath: "/home/itahil/REPO/software/polestar/DHU_ORT_110_VCUv1_RC_INT/artifacts.zip"
+          dhum_sw_filepath: "/home/itahil/REPO/software/polestar/DHU_ORT_110_VCUv1_RC_INT/FW.zip"
+        volvo:
+          dhuh_sw_filepath: "/home/itahil/REPO/software/volvo/DHU_ORT_110_VCUv1_RC_INT/artifacts.zip"
+          dhum_sw_filepath: "/home/itahil/REPO/software/volvo/DHU_ORT_110_VCUv1_RC_INT/FW.zip"
+
+  hix_handler:
+    script_filepath: "C:\\hix-auto-flash\\src\\Main.exe"
+    virtual_machine:
+      vm_name: "windows10"
+      ip_address: "192.168.56.101"
+
+  hpa_handler:
+    script_filepath: "/home/itahil/vcc_patched/tools/flash.sh"
+
+  sga_handler:
+    script_filepath: ""
